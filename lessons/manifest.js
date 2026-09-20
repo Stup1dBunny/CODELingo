@@ -5,5 +5,7 @@ window.__THEME_MANIFEST__ = [
   'typescript.js',
   'react.js',
   'redux.js',
-  'sql.js'
+  'sql.js',
+  'devops.js',
+  'devopsadd.js'
 ];
