@@ -470,7 +470,7 @@ function plural(n, one, few, many) {
   let loaded = 0;
   files.forEach(file => {
     const s = document.createElement('script');
-    s.src = 'themes/' + file;
+    s.src = 'lessons/' + file;
     s.onload = () => {
       loaded++;
       if (loaded === files.length) {
