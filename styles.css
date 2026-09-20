@@ -1,0 +1,727 @@
+/* ============================================
+   ПЕРЕМЕННЫЕ
+   ============================================ */
+:root {
+    /* Фоны */
+    --bg: #0b0d12;
+    --bg-grad-1: #0d1017;
+    --bg-grad-2: #0b0d12;
+    --surface: #141821;
+    --surface-2: #1b2029;
+    --surface-3: #232935;
+    --surface-hover: #1f2530;
+
+    /* Границы */
+    --border: #252b38;
+    --border-strong: #333a4a;
+
+    /* Текст */
+    --text: #eef1f6;
+    --text-dim: #b8bfcc;
+    --muted: #7c8699;
+
+    /* Акценты */
+    --accent: #58cc02;
+    --accent-hi: #6ee015;
+    --accent-dim: #3d8f02;
+    --accent-soft: rgba(88, 204, 2, 0.12);
+    --accent-glow: rgba(88, 204, 2, 0.35);
+
+    --blue: #4a9eff;
+    --purple: #a06cff;
+    --warn: #ffb020;
+    --danger: #ff5470;
+    --danger-soft: rgba(255, 84, 112, 0.12);
+
+    /* Геометрия */
+    --radius-sm: 8px;
+    --radius: 14px;
+    --radius-lg: 20px;
+    --radius-pill: 999px;
+
+    /* Тени */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
+    --shadow: 0 4px 16px rgba(0, 0, 0, .35);
+    --shadow-lg: 0 12px 40px rgba(0, 0, 0, .5);
+
+    /* Анимации */
+    --ease: cubic-bezier(.22, .61, .36, 1);
+}
+
+/* ============================================
+   БАЗА
+   ============================================ */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg);
+    background-image:
+        radial-gradient(1200px 800px at 10% -10%, rgba(88, 204, 2, 0.06), transparent 60%),
+        radial-gradient(900px 600px at 90% 0%, rgba(74, 158, 255, 0.05), transparent 60%),
+        linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+}
+
+.app {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+}
+
+/* Скроллбар */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: var(--radius-pill);
+    border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+}
+
+/* ============================================
+   ТИПОГРАФИКА
+   ============================================ */
+h1,
+h2,
+h3 {
+    line-height: 1.25;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+h1 {
+    font-size: 22px;
+}
+
+h2 {
+    font-size: 20px;
+}
+
+h3 {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+p {
+    margin: 0 0 8px;
+}
+
+.muted {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.dim {
+    color: var(--text-dim);
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.page-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 26px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.page-head h1 {
+    flex: 1;
+    min-width: 200px;
+}
+
+.page-head .sub {
+    width: 100%;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: -6px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 200px;
+}
+
+.brand__logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    box-shadow: 0 4px 16px var(--accent-glow);
+}
+
+/* ============================================
+   КНОПКИ
+   ============================================ */
+button {
+    font: inherit;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background .15s var(--ease), border-color .15s var(--ease), transform .1s var(--ease), color .15s var(--ease);
+    user-select: none;
+    white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+    background: var(--surface-3);
+    border-color: var(--border-strong);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+button.primary {
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+    border-color: var(--accent);
+    color: #08210a;
+    font-weight: 700;
+    box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+button.primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent-hi));
+    border-color: var(--accent-hi);
+}
+
+button.ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-dim);
+}
+
+button.ghost:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+button.danger {
+    color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+}
+
+button.icon {
+    padding: 10px 12px;
+    font-size: 16px;
+    line-height: 1;
+}
+
+/* ============================================
+   СЕТКИ
+   ============================================ */
+.grid {
+    display: grid;
+    gap: 14px;
+}
+
+.grid.themes {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.grid.levels {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+
+/* ============================================
+   КАРТОЧКИ
+   ============================================ */
+.card {
+    position: relative;
+    background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    cursor: pointer;
+    transition: border-color .18s var(--ease), transform .18s var(--ease), box-shadow .18s var(--ease), background .18s var(--ease);
+    overflow: hidden;
+}
+
+.card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(400px 120px at 50% 0%, var(--accent-soft), transparent 70%);
+    opacity: 0;
+    transition: opacity .25s var(--ease);
+    pointer-events: none;
+}
+
+.card:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+
+.card:hover::before {
+    opacity: 1;
+}
+
+.card h3 {
+    margin-bottom: 6px;
+}
+
+.card .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+.card .status {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.card.is-done {
+    border-color: rgba(88, 204, 2, 0.5);
+}
+
+.card.is-done::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent);
+}
+
+/* ============================================
+   ПРОГРЕСС-БАР
+   ============================================ */
+.bar {
+    position: relative;
+    height: 8px;
+    background: var(--surface-3);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.bar>i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent-hi));
+    border-radius: inherit;
+    transition: width .4s var(--ease);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.progress-line {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.progress-line .bar {
+    flex: 1;
+    margin: 0;
+}
+
+.progress-line .counter {
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    min-width: 60px;
+    text-align: right;
+}
+
+/* ============================================
+   ОБЩИЙ ТЕСТ — выделенная карточка
+   ============================================ */
+.general-card {
+    position: relative;
+    background: linear-gradient(135deg, rgba(88, 204, 2, 0.12), rgba(74, 158, 255, 0.06));
+    border: 1px solid rgba(88, 204, 2, 0.45);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 22px;
+    cursor: pointer;
+    transition: border-color .18s var(--ease), transform .18s var(--ease), box-shadow .18s var(--ease);
+    overflow: hidden;
+}
+
+.general-card::before {
+    content: "";
+    position: absolute;
+    top: -50%;
+    right: -10%;
+    width: 260px;
+    height: 260px;
+    background: radial-gradient(circle, var(--accent-soft), transparent 60%);
+    pointer-events: none;
+}
+
+.general-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 28px var(--accent-glow);
+}
+
+.general-card h3 {
+    margin-bottom: 6px;
+}
+
+.general-card .sub {
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+/* ============================================
+   ЭКРАН ТЕОРИИ
+   ============================================ */
+.theory-nav {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.qbox {
+    background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 26px 28px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
+    animation: fadeUp .25s var(--ease);
+}
+
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid rgba(88, 204, 2, 0.25);
+    border-radius: var(--radius-pill);
+    padding: 3px 10px;
+    margin-bottom: 14px;
+}
+
+.qbox .q {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.45;
+    margin: 0 0 14px;
+    white-space: pre-wrap;
+    color: var(--text);
+}
+
+.qbox .a {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+}
+
+/* ============================================
+   ВАРИАНТЫ ОТВЕТА В ТЕСТЕ
+   ============================================ */
+.options {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.opt {
+    position: relative;
+    text-align: left;
+    padding: 14px 18px 14px 48px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+    line-height: 1.5;
+    color: var(--text-dim);
+    transition: all .15s var(--ease);
+    cursor: pointer;
+}
+
+.opt::before {
+    content: "";
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    transition: all .15s var(--ease);
+}
+
+.opt:hover:not(:disabled) {
+    background: var(--surface-3);
+    border-color: var(--border-strong);
+    color: var(--text);
+}
+
+.opt:hover:not(:disabled)::before {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.opt.correct {
+    background: rgba(88, 204, 2, 0.1);
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.opt.correct::before {
+    border-color: var(--accent);
+    background: var(--accent);
+    box-shadow: inset 0 0 0 3px var(--surface-2);
+}
+
+.opt.wrong {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+    color: var(--text);
+}
+
+.opt.wrong::before {
+    border-color: var(--danger);
+    background: var(--danger);
+    box-shadow: inset 0 0 0 3px var(--surface-2);
+}
+
+.opt:disabled {
+    cursor: default;
+}
+
+.opt:disabled:not(.correct):not(.wrong) {
+    opacity: .55;
+}
+
+/* ============================================
+   ДЕЙСТВИЯ
+   ============================================ */
+.actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+}
+
+.actions .spacer {
+    flex: 1;
+}
+
+/* ============================================
+   РЕЗУЛЬТАТ ТЕСТА
+   ============================================ */
+.result-box {
+    padding: 28px 26px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    border: 1px solid var(--border);
+    text-align: center;
+    animation: fadeUp .3s var(--ease);
+}
+
+.result-box h2 {
+    margin-bottom: 8px;
+}
+
+.result-box p {
+    color: var(--text-dim);
+}
+
+.result-box.ok {
+    border-color: rgba(88, 204, 2, 0.5);
+    background:
+        radial-gradient(400px 200px at 50% 0%, var(--accent-soft), transparent 70%),
+        linear-gradient(180deg, var(--surface), var(--surface-2));
+    box-shadow: 0 8px 32px rgba(88, 204, 2, 0.12);
+}
+
+.result-box.fail {
+    border-color: rgba(255, 84, 112, 0.5);
+    background:
+        radial-gradient(400px 200px at 50% 0%, var(--danger-soft), transparent 70%),
+        linear-gradient(180deg, var(--surface), var(--surface-2));
+}
+
+.result-box .emoji {
+    font-size: 44px;
+    line-height: 1;
+    display: block;
+    margin-bottom: 8px;
+}
+
+.result-box .score {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 8px 0;
+}
+
+.result-box .score b {
+    color: var(--accent);
+}
+
+/* ============================================
+   ЗАГРУЗКА
+   ============================================ */
+.loading {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--muted);
+}
+
+.loading::before {
+    content: "";
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================
+   ПУСТОЕ СОСТОЯНИЕ
+   ============================================ */
+.empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+}
+
+.empty h3 {
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+/* ============================================
+   АДАПТИВ
+   ============================================ */
+@media (max-width: 600px) {
+    .app {
+        padding: 18px 16px 60px;
+    }
+
+    h1 {
+        font-size: 19px;
+    }
+
+    .qbox {
+        padding: 20px 18px;
+    }
+
+    .qbox .q {
+        font-size: 16px;
+    }
+
+    .grid.themes {
+        grid-template-columns: 1fr;
+    }
+
+    .grid.levels {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .card {
+        padding: 16px;
+    }
+
+    button {
+        padding: 9px 14px;
+    }
+}
+
+/* ============================================
+   УТИЛИТЫ
+   ============================================ */
+.hidden {
+    display: none !important;
+}
+
+.center {
+    text-align: center;
+}
