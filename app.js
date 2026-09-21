@@ -12,10 +12,13 @@ const LEVEL_LABELS = {
 };
 const STORAGE_KEY = 'quiz_progress_v2';
 const INTERVIEW_CONFIG_KEY = 'quiz_interview_config_v1';
-const GENERAL_TEST_SIZE = 18;
+const FINAL_SUB = '__final__';
+const FLAT_LEVEL = 'all';
 const INTERVIEW_DEFAULT_SIZE = 15;
 const INTERVIEW_SIZES = [10, 15, 20, 30];
-const FLAT_LEVEL = 'all';   // фиктивный "уровень" для тем без уровней
+
+// Паттерн зигзага: 3 позиции, цикл. Соседние узлы всегда в разных колонках.
+const ZIGZAG = ['left', 'center', 'right'];
 
 // ================== Состояние ==================
 const state = {
@@ -30,6 +33,8 @@ const state = {
   revealedAnswer: false,
   generalTest: false,
   interviewMode: false,
+  finalTest: false,
+  finalLevel: null,
   interviewConfig: null,
   questionShownAt: 0,
   lastTestResult: null,
@@ -47,7 +52,6 @@ function loadProgress() {
 function saveProgress() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.progress));
 }
-
 function getSubStatus(themeId, level, sub) {
   const key = `${themeId}::${level}::${sub}`;
   return state.progress[key] || { read: false, done: false };
@@ -82,8 +86,6 @@ function recordAnswer(qid, correct, timeMs) {
   state.progress[key] = s;
   saveProgress();
 }
-
-// Вес для «умной» выборки: чаще спрашивать то, что плохо знаешь
 function questionWeight(qid) {
   const s = getQStat(qid);
   const wrong = s.wrongCount || 0;
@@ -108,34 +110,13 @@ function saveInterviewConfig(cfg) {
 // ================== Утилиты ==================
 function getTheme(id) { return DATA_MAP.get(id); }
 
-// ---------- Режим темы ----------
 function isFlat(theme) {
   return !!(theme && theme.structure === 'flat');
 }
-
-// Все подтемы темы (без учёта уровня) — для flat-режима
-function allSubtopicsOfTheme(theme) {
-  const map = {};
-  (theme.questions || []).forEach(q => {
-    (map[q.subtopic] = map[q.subtopic] || []).push(q);
-  });
-  return map;
+function isPath(theme) {
+  return !isFlat(theme);
 }
 
-// Все вопросы темы (для flat-режима)
-function allQuestionsOfTheme(theme) {
-  return (theme.questions || []).slice();
-}
-
-// Подтемы для текущего экрана: с учётом уровня или без
-function subtopicsForState(theme, level) {
-  if (isFlat(theme) || level === FLAT_LEVEL) {
-    return allSubtopicsOfTheme(theme);
-  }
-  return subtopicsOfExactLevel(theme, level);
-}
-
-// ---------- Базовые выборки ----------
 function questionsOfExactLevel(theme, level) {
   return theme.questions.filter(q => q.level === level);
 }
@@ -150,6 +131,72 @@ function subtopicsOfExactLevel(theme, level) {
   qs.forEach(q => { (map[q.subtopic] = map[q.subtopic] || []).push(q); });
   return map;
 }
+function allSubtopicsOfTheme(theme) {
+  const map = {};
+  (theme.questions || []).forEach(q => {
+    (map[q.subtopic] = map[q.subtopic] || []).push(q);
+  });
+  return map;
+}
+function allQuestionsOfTheme(theme) {
+  return (theme.questions || []).slice();
+}
+function subtopicsForState(theme, level) {
+  if (isFlat(theme) || level === FLAT_LEVEL) {
+    return allSubtopicsOfTheme(theme);
+  }
+  return subtopicsOfExactLevel(theme, level);
+}
+
+function levelsWithQuestions(theme) {
+  return LEVELS.filter(l => questionsOfExactLevel(theme, l).length > 0);
+}
+
+// ---------- Статус подтемы на пути ----------
+function getSubtopicPathStatus(theme, level, sub, opts = {}) {
+  const { subsOrder, index } = opts;
+  const st = getSubStatus(theme.id, level, sub);
+  if (st.done) return 'done';
+  if (index === 0) {
+    const prevLevel = prevLevelOf(theme, level);
+    if (!prevLevel) return 'current';
+    return isLevelCompleted(theme, prevLevel) ? 'current' : 'locked';
+  }
+  const prevSub = subsOrder[index - 1];
+  const prevSt = getSubStatus(theme.id, level, prevSub);
+  return prevSt.done ? 'current' : 'locked';
+}
+
+function prevLevelOf(theme, level) {
+  const levels = levelsWithQuestions(theme);
+  const idx = levels.indexOf(level);
+  if (idx <= 0) return null;
+  return levels[idx - 1];
+}
+
+function isLevelCompleted(theme, level) {
+  const subs = subtopicsOfExactLevel(theme, level);
+  const subNames = Object.keys(subs);
+  if (subNames.length === 0) return true;
+  const allDone = subNames.every(s => getSubStatus(theme.id, level, s).done);
+  if (!allDone) return false;
+  return !!getSubStatus(theme.id, level, FINAL_SUB).done;
+}
+
+function isFinalTestAvailable(theme, level) {
+  const subs = subtopicsOfExactLevel(theme, level);
+  const subNames = Object.keys(subs);
+  if (subNames.length === 0) return false;
+  return subNames.every(s => getSubStatus(theme.id, level, s).done);
+}
+
+function finalTestSize(theme, level) {
+  const pool = questionsUpToLevel(theme, level);
+  if (pool.length === 0) return 0;
+  return Math.max(10, Math.min(20, Math.floor(pool.length / 4)));
+}
+
+// ---------- Общие утилиты ----------
 function shuffle(a) {
   const arr = [...a];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -161,31 +208,28 @@ function shuffle(a) {
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+function plural(n, one, few, many) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
 
-// ---------- Rich text: подсветка кода ----------
+// ---------- Rich text ----------
 function renderRichText(text) {
   if (!text) return '';
   let s = escapeHtml(text);
-
-  // Блочный код: ```lang\n...\n```
   s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
     const l = (lang || 'javascript').toLowerCase();
     return `<pre><code class="language-${l}">${code}</code></pre>`;
   });
-
-  // Инлайн `code`
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-  // Переносы строк → <br>, кроме блоков <pre>
   s = s.split(/(<pre>[\s\S]*?<\/pre>)/).map(part => {
     if (part.startsWith('<pre>')) return part;
     return part.replace(/\n/g, '<br>');
   }).join('');
-
   return s;
 }
-
-// Подсветка + кнопка «Копировать» для <pre>
 function applyCodeHighlight(container) {
   if (window.hljs) {
     container.querySelectorAll('pre code').forEach(el => {
@@ -222,7 +266,7 @@ function applyCodeHighlight(container) {
   });
 }
 
-// ---------- Взвешенная выборка без повторов ----------
+// ---------- Взвешенная выборка ----------
 function weightedSample(pool, size) {
   if (!pool.length || size <= 0) return [];
   const items = pool.map(q => ({ q, w: questionWeight(q.id) }));
@@ -247,8 +291,8 @@ const app = document.getElementById('app');
 function render() {
   app.innerHTML = '';
   if (state.screen === 'themes') renderThemes();
-  else if (state.screen === 'levels') renderLevels();
-  else if (state.screen === 'subtopics') renderSubtopics();
+  else if (state.screen === 'path') renderPath();
+  else if (state.screen === 'flatSubtopics') renderFlatSubtopics();
   else if (state.screen === 'theory') renderTheory();
   else if (state.screen === 'test') renderTest();
   else if (state.screen === 'testResult') renderTestResult();
@@ -257,7 +301,7 @@ function render() {
   window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
 }
 
-// ---------- Темы ----------
+// ---------- Главная ----------
 function renderThemes() {
   const header = document.createElement('header');
   header.className = 'page-head';
@@ -279,27 +323,27 @@ function renderThemes() {
   grid.className = 'grid themes';
 
   DATA.forEach(theme => {
-    let totalSubs = 0, doneSubs = 0;
+    const isEmpty = theme.questions.length === 0;
+    let totalSubs = 0, doneSubs = 0, pct = 0;
 
-    if (isFlat(theme)) {
-      const subs = allSubtopicsOfTheme(theme);
-      Object.keys(subs).forEach(sub => {
-        totalSubs++;
-        if (getSubStatus(theme.id, FLAT_LEVEL, sub).done) doneSubs++;
-      });
-    } else {
-      const levelsWithQs = LEVELS.filter(l => questionsOfExactLevel(theme, l).length > 0);
-      levelsWithQs.forEach(level => {
-        const subs = subtopicsOfExactLevel(theme, level);
+    if (!isEmpty) {
+      if (isFlat(theme)) {
+        const subs = allSubtopicsOfTheme(theme);
         Object.keys(subs).forEach(sub => {
           totalSubs++;
-          if (getSubStatus(theme.id, level, sub).done) doneSubs++;
+          if (getSubStatus(theme.id, FLAT_LEVEL, sub).done) doneSubs++;
         });
-      });
+      } else {
+        LEVELS.forEach(level => {
+          const subs = subtopicsOfExactLevel(theme, level);
+          Object.keys(subs).forEach(sub => {
+            totalSubs++;
+            if (getSubStatus(theme.id, level, sub).done) doneSubs++;
+          });
+        });
+      }
+      pct = totalSubs ? Math.round(doneSubs / totalSubs * 100) : 0;
     }
-
-    const pct = totalSubs ? Math.round(doneSubs / totalSubs * 100) : 0;
-    const isEmpty = theme.questions.length === 0;
 
     const card = document.createElement('div');
     card.className = 'card' + (pct === 100 && totalSubs > 0 ? ' is-done' : '');
@@ -314,10 +358,10 @@ function renderThemes() {
         state.themeId = theme.id;
         if (isFlat(theme)) {
           state.level = FLAT_LEVEL;
-          state.screen = 'subtopics';
+          state.screen = 'flatSubtopics';
         } else {
           state.level = null;
-          state.screen = 'levels';
+          state.screen = 'path';
         }
         render();
       };
@@ -337,77 +381,237 @@ function renderThemes() {
   };
 }
 
-// ---------- Уровни ----------
-function renderLevels() {
+// ================== PATH: экран пути ==================
+function renderPath() {
   const theme = getTheme(state.themeId);
-  topBar(`${theme.theme}`, () => { state.screen = 'themes'; render(); });
+  topBar(theme.theme, () => { state.screen = 'themes'; render(); });
 
-  const grid = document.createElement('div');
-  grid.className = 'grid levels';
+  const levels = levelsWithQuestions(theme);
+  const wrap = document.createElement('div');
+  wrap.className = 'path-wrap';
 
-  LEVELS.forEach(level => {
-    const qs = questionsOfExactLevel(theme, level);
-    if (qs.length === 0) return;
-    const subs = subtopicsOfExactLevel(theme, level);
-    const subNames = Object.keys(subs);
-    const done = subNames.filter(s => getSubStatus(theme.id, level, s).done).length;
-    const pct = subNames.length ? Math.round(done / subNames.length * 100) : 0;
-    const isDone = done === subNames.length && subNames.length > 0;
+  levels.forEach((level, li) => {
+    const isLocked = li > 0 && !isLevelCompleted(theme, levels[li - 1]);
+    const levelDone = isLevelCompleted(theme, level);
 
-    const card = document.createElement('div');
-    card.className = 'card' + (isDone ? ' is-done' : '');
-    card.innerHTML = `
-      <h3>${LEVEL_LABELS[level]}</h3>
-      <div class="sub">${done} / ${subNames.length} · ${pct}%</div>
-      <div class="bar"><i style="width:${pct}%"></i></div>
+    // --- Заголовок сегмента ---
+    const seg = document.createElement('div');
+    seg.className = 'path-segment'
+      + (isLocked ? ' is-locked' : '')
+      + (levelDone ? ' is-done' : '');
+
+    const subsForLevel = subtopicsOfExactLevel(theme, level);
+    const subNames = Object.keys(subsForLevel);
+    const doneCount = subNames.filter(s => getSubStatus(theme.id, level, s).done).length;
+
+    seg.innerHTML = `
+      <div class="path-segment__title">
+        ${isLocked ? '🔒' : (levelDone ? '✓' : '●')}
+        <span>${LEVEL_LABELS[level]}</span>
+      </div>
+      <div class="path-segment__meta">${doneCount} / ${subNames.length} подтем</div>
     `;
-    card.onclick = () => { state.level = level; state.screen = 'subtopics'; render(); };
-    grid.appendChild(card);
+    wrap.appendChild(seg);
+
+    // --- Змейка ---
+    const snake = document.createElement('div');
+    snake.className = 'path-snake' + (isLocked ? ' is-disabled' : '');
+    snake.dataset.level = level;
+
+    // SVG-слой для линий. Заполняется после appendChild в drawPathLines.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'path-lines');
+    svg.setAttribute('aria-hidden', 'true');
+    snake.appendChild(svg);
+
+    // Узлы подтем + финальный
+    const allNodes = subNames.slice();
+    const finalStatus = (() => {
+      if (isLocked) return 'locked';
+      if (getSubStatus(theme.id, level, FINAL_SUB).done) return 'done';
+      if (isFinalTestAvailable(theme, level)) return 'current';
+      return 'locked';
+    })();
+
+    // Формируем список строк: каждая — { type, sub?, status, position }
+    const rows = [];
+
+    subNames.forEach((sub, si) => {
+      const status = isLocked
+        ? 'locked'
+        : getSubtopicPathStatus(theme, level, sub, { subsOrder: subNames, index: si });
+      rows.push({ type: 'sub', sub, status });
+    });
+
+    rows.push({ type: 'final', status: finalStatus });
+
+    // Определяем позиции по циклу
+    // Но! Финальный узел хочется в центре. Тогда последний sub — не center.
+    // Проще: назначаем позиции по кругу, а финальный — всегда center,
+    // и сдвигаем цикл так, чтобы последний sub был НЕ center.
+    // Упростим: цикл left → center → right → left → ...
+    // Финальный — center. Если предыдущий sub тоже center — поменяем sub на left.
+    rows.forEach((row, i) => {
+      if (row.type === 'final') {
+        row.pos = 'center';
+      } else {
+        row.pos = ZIGZAG[i % ZIGZAG.length];
+      }
+    });
+
+    // Разрешаем коллизию: если рядом с финалом (center) стоит sub с pos=center
+    if (rows.length >= 2) {
+      const lastSub = rows[rows.length - 2];
+      if (lastSub.type === 'sub' && lastSub.pos === 'center') {
+        // Сдвинем его в left или right
+        lastSub.pos = 'left';
+      }
+    }
+
+    // Рендерим узлы
+    rows.forEach((row, i) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'path-node-row path-node-row--' + row.pos;
+      rowEl.dataset.index = i;
+
+      const item = document.createElement('div');
+      item.className = 'path-item';
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'path-node';
+      btn.dataset.pos = row.pos;
+
+      let labelText = '';
+      let clickHandler = null;
+
+      if (row.type === 'sub') {
+        item.classList.add('path-item--' + row.status);
+        btn.classList.add('path-node--' + row.status);
+        btn.innerHTML = row.status === 'done' ? '✓' : (row.status === 'locked' ? '🔒' : '●');
+        btn.disabled = row.status === 'locked';
+        btn.setAttribute('aria-label', row.sub);
+        labelText = row.sub;
+        const subRef = row.sub;
+        const statusRef = row.status;
+        clickHandler = () => {
+          if (statusRef === 'locked') return;
+          state.level = level;
+          startTheory(subRef);
+        };
+      } else {
+        item.classList.add('path-item--final');
+        item.classList.add('path-item--' + row.status);
+        btn.classList.add('path-node--final');
+        btn.classList.add('path-node--' + row.status);
+        btn.innerHTML = row.status === 'done' ? '🏆' : '🏁';
+        btn.disabled = row.status === 'locked';
+        btn.setAttribute('aria-label', 'Итоговый тест');
+        labelText = 'Итоговый тест';
+        const statusRef = row.status;
+        clickHandler = () => {
+          if (statusRef === 'locked') return;
+          startFinalTest(level);
+        };
+      }
+
+      if (clickHandler) btn.onclick = clickHandler;
+      item.appendChild(btn);
+
+      // Подпись: только у текущего узла (В)
+      if (row.status === 'current') {
+        const label = document.createElement('div');
+        label.className = 'path-label';
+        label.textContent = labelText;
+        item.appendChild(label);
+      }
+
+      // Для финала — подпись внизу всегда (иначе не найти)
+      if (row.type === 'final') {
+        const label = document.createElement('div');
+        label.className = 'path-label path-label--final';
+        label.textContent = labelText;
+        item.appendChild(label);
+      }
+
+      rowEl.appendChild(item);
+      snake.appendChild(rowEl);
+    });
+
+    wrap.appendChild(snake);
   });
-  app.appendChild(grid);
+
+  app.appendChild(wrap);
+
+  // После вставки в DOM — рисуем линии
+  requestAnimationFrame(() => {
+    wrap.querySelectorAll('.path-snake').forEach(snake => drawPathLines(snake));
+  });
 }
 
-// ---------- Подтемы ----------
-function renderSubtopics() {
-  const theme = getTheme(state.themeId);
-  const flat = isFlat(theme) || state.level === FLAT_LEVEL;
+// ---------- Рисуем SVG-линии между центрами соседних узлов ----------
+function drawPathLines(snake) {
+  const svg = snake.querySelector('svg.path-lines');
+  if (!svg) return;
+  const rows = snake.querySelectorAll('.path-node-row');
+  if (rows.length < 2) {
+    svg.innerHTML = '';
+    return;
+  }
 
-  const title = flat
-    ? theme.theme
-    : `${theme.theme} · ${LEVEL_LABELS[state.level]}`;
+  const snakeRect = snake.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${snakeRect.width} ${snakeRect.height}`);
+  svg.setAttribute('width', snakeRect.width);
+  svg.setAttribute('height', snakeRect.height);
+  svg.style.position = 'absolute';
+  svg.style.top = '0';
+  svg.style.left = '0';
+  svg.style.width = snakeRect.width + 'px';
+  svg.style.height = snakeRect.height + 'px';
+  svg.style.pointerEvents = 'none';
 
-  topBar(title, () => {
-    if (flat) {
-      state.screen = 'themes';
-    } else {
-      state.screen = 'levels';
-    }
-    render();
+  const centers = [];
+  rows.forEach(row => {
+    const btn = row.querySelector('.path-node');
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    centers.push({
+      x: r.left + r.width / 2 - snakeRect.left,
+      y: r.top + r.height / 2 - snakeRect.top,
+      status: (btn.classList.contains('path-node--done')) ? 'done'
+        : (btn.classList.contains('path-node--current')) ? 'current'
+        : 'locked'
+    });
   });
 
-  const subs = flat
-    ? allSubtopicsOfTheme(theme)
-    : subtopicsOfExactLevel(theme, state.level);
+  let html = '';
+  for (let i = 0; i < centers.length - 1; i++) {
+    const a = centers[i];
+    const b = centers[i + 1];
+    // Цвет линии: если оба узла done — зелёный, иначе серый
+    const lineClass = (a.status === 'done' && b.status === 'done') ? 'path-line path-line--done' : 'path-line';
+    html += `<line class="${lineClass}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`;
+  }
+  svg.innerHTML = html;
+}
 
-  const upToCount = flat
-    ? allQuestionsOfTheme(theme).length
-    : questionsUpToLevel(theme, state.level).length;
+// Перерисовывать линии при ресайзе
+window.addEventListener('resize', () => {
+  if (state.screen !== 'path') return;
+  document.querySelectorAll('.path-snake').forEach(snake => drawPathLines(snake));
+});
 
-  const general = document.createElement('div');
-  general.className = 'general-card';
-  general.innerHTML = `
-    <h3>🎯 Общий тест ${flat ? 'по теме' : 'уровня'}</h3>
-    <div class="sub">${Math.min(GENERAL_TEST_SIZE, upToCount)} случайных вопросов ${flat ? 'из всех подтем' : `со всех уровней до ${LEVEL_LABELS[state.level]} включительно`}</div>
-  `;
-  general.onclick = () => startGeneralTest();
-  app.appendChild(general);
+// ================== FLAT: подтемы ==================
+function renderFlatSubtopics() {
+  const theme = getTheme(state.themeId);
+  topBar(theme.theme, () => { state.screen = 'themes'; render(); });
 
+  const subs = allSubtopicsOfTheme(theme);
   const grid = document.createElement('div');
   grid.className = 'grid themes';
 
   Object.entries(subs).forEach(([sub, list]) => {
-    const levelKey = flat ? FLAT_LEVEL : state.level;
-    const st = getSubStatus(theme.id, levelKey, sub);
+    const st = getSubStatus(theme.id, FLAT_LEVEL, sub);
     const statusIcon = st.done ? '✓' : st.read ? '📖' : '🔒';
     const card = document.createElement('div');
     card.className = 'card' + (st.done ? ' is-done' : '');
@@ -434,6 +638,14 @@ function renderTheory() {
   const theme = getTheme(state.themeId);
   const subs = subtopicsForState(theme, state.level);
   const list = subs[state.subtopic];
+
+  if (!list || !list.length) {
+    console.warn(`[renderTheory] Не найдена подтема "${state.subtopic}" для темы "${theme.theme}" (level=${state.level})`);
+    state.screen = isFlat(theme) ? 'flatSubtopics' : 'path';
+    render();
+    return;
+  }
+
   const total = list.length;
   const idx = state.theoryIndex;
   const q = list[idx];
@@ -448,7 +660,14 @@ function renderTheory() {
     </div>
   `;
   app.appendChild(nav);
-  document.getElementById('back').onclick = () => { state.screen = 'subtopics'; render(); };
+  document.getElementById('back').onclick = () => {
+    if (isFlat(theme) || state.level === FLAT_LEVEL) {
+      state.screen = 'flatSubtopics';
+    } else {
+      state.screen = 'path';
+    }
+    render();
+  };
 
   const box = document.createElement('div');
   box.className = 'qbox';
@@ -486,6 +705,13 @@ function startTestForSubtopic() {
   const subs = subtopicsForState(theme, state.level);
   const list = subs[state.subtopic];
 
+  if (!list || !list.length) {
+    console.warn(`[startTestForSubtopic] Не найдена подтема "${state.subtopic}"`);
+    state.screen = isFlat(theme) ? 'flatSubtopics' : 'path';
+    render();
+    return;
+  }
+
   setSubStatus(theme.id, state.level, state.subtopic, { read: true });
 
   state.testQueue = shuffle(list).map(q => makeTestQuestion(q, list));
@@ -494,32 +720,387 @@ function startTestForSubtopic() {
   state.revealedAnswer = false;
   state.generalTest = false;
   state.interviewMode = false;
+  state.finalTest = false;
+  state.finalLevel = null;
   state.questionShownAt = Date.now();
   state.screen = 'test';
   render();
 }
 
-// ---------- Общий тест уровня / темы ----------
-function startGeneralTest() {
+// ---------- Итоговый тест сегмента ----------
+function startFinalTest(level) {
   const theme = getTheme(state.themeId);
-  const flat = isFlat(theme) || state.level === FLAT_LEVEL;
-  const all = flat
-    ? allQuestionsOfTheme(theme)
-    : questionsUpToLevel(theme, state.level);
+  const pool = questionsUpToLevel(theme, level);
+  const size = finalTestSize(theme, level);
 
-  const picked = weightedSample(all, Math.min(GENERAL_TEST_SIZE, all.length));
-  state.testQueue = picked.map(q => makeTestQuestion(q, all));
+  if (!pool.length || size === 0) return;
+
+  const picked = weightedSample(pool, Math.min(size, pool.length));
+
+  state.testQueue = picked.map(q => makeTestQuestion(q, pool));
   state.testIndex = 0;
   state.testAnswers = [];
   state.revealedAnswer = false;
-  state.generalTest = true;
-  state.interviewMode = false;
+  state.generalTest = false;
+  state.interviewMode = true;
+  state.finalTest = true;
+  state.finalLevel = level;
   state.questionShownAt = Date.now();
   state.screen = 'test';
   render();
 }
 
-// ---------- Режим собеседования ----------
+// ---------- Генерация вопроса ----------
+function makeTestQuestion(q, pool) {
+  let options;
+  if (Array.isArray(q.wrong) && q.wrong.length >= 3) {
+    options = shuffle([
+      { text: q.a, correct: true },
+      ...q.wrong.slice(0, 3).map(text => ({ text, correct: false }))
+    ]);
+  } else {
+    const others = pool.filter(x => x.id !== q.id);
+    let distractors = others.filter(x => x.subtopic === q.subtopic);
+    if (distractors.length < 3) distractors = others;
+    distractors = shuffle(distractors).slice(0, 3);
+    options = shuffle([
+      { text: q.a, correct: true },
+      ...distractors.map(d => ({ text: d.a, correct: false }))
+    ]);
+  }
+  return { q, options };
+}
+
+// ---------- Тест ----------
+function renderTest() {
+  const total = state.testQueue.length;
+  const idx = state.testIndex;
+  const item = state.testQueue[idx];
+  const interview = state.interviewMode;
+  const finalTest = state.finalTest;
+  state.questionShownAt = Date.now();
+
+  const nav = document.createElement('div');
+  nav.className = 'theory-nav';
+  nav.innerHTML = `
+    <button class="ghost icon" id="quit">←</button>
+    <div class="progress-line" style="flex:1">
+      <div class="bar"><i style="width:${idx / total * 100}%"></i></div>
+      <span class="counter">${idx + 1} / ${total}</span>
+    </div>
+  `;
+  app.appendChild(nav);
+  document.getElementById('quit').onclick = () => {
+    if (confirm('Выйти из теста? Прогресс не сохранится.')) {
+      if (finalTest) { state.screen = 'path'; }
+      else if (interview) { state.screen = 'interviewConfig'; }
+      else if (isFlat(getTheme(state.themeId))) { state.screen = 'flatSubtopics'; }
+      else { state.screen = 'path'; }
+      render();
+    }
+  };
+
+  const box = document.createElement('div');
+  box.className = 'qbox';
+  const badges = [];
+  if (finalTest) badges.push('<div class="tag tag--final">🏁 Итоговый тест</div>');
+  if (interview && !finalTest) badges.push('<div class="tag tag--interview">🎯 Собеседование</div>');
+  const levelTag = item.q.level ? ` · ${LEVEL_LABELS[item.q.level]}` : '';
+  box.innerHTML = `
+    <div class="tag-row">
+      <div class="tag">${item.q.subtopic}${levelTag}</div>
+      ${badges.join('')}
+    </div>
+    <div class="q">${renderRichText(item.q.q)}</div>
+  `;
+  app.appendChild(box);
+  applyCodeHighlight(box);
+
+  const opts = document.createElement('div');
+  opts.className = 'options';
+
+  item.options.forEach((o, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'opt';
+    btn.dataset.correct = o.correct;
+    btn.dataset.i = i;
+    btn.innerHTML = `<span class="key">${i + 1}</span>${escapeHtml(o.text)}`;
+
+    btn.onclick = () => {
+      if (state.revealedAnswer) return;
+      const timeMs = Date.now() - state.questionShownAt;
+
+      if (interview) {
+        state.revealedAnswer = true;
+        state.testAnswers.push({
+          qid: item.q.id,
+          correct: o.correct,
+          chosenText: o.text,
+          correctText: item.q.explain || item.q.a,
+          timeMs,
+          interview: true
+        });
+        recordAnswer(item.q.id, o.correct, timeMs);
+        opts.querySelectorAll('.opt').forEach(b => { b.disabled = true; });
+        btn.classList.add('chosen');
+
+        const next = document.createElement('button');
+        next.className = 'primary';
+        next.textContent = idx === total - 1 ? 'Завершить' : 'Далее →';
+        next.onclick = () => {
+          state.revealedAnswer = false;
+          if (idx === total - 1) {
+            if (finalTest) finishFinalTest();
+            else finishInterview();
+          } else { state.testIndex++; render(); }
+        };
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        actions.appendChild(next);
+        app.appendChild(actions);
+      } else {
+        state.revealedAnswer = true;
+        state.testAnswers.push({ qid: item.q.id, correct: o.correct, timeMs });
+        recordAnswer(item.q.id, o.correct, timeMs);
+
+        opts.querySelectorAll('.opt').forEach((b, j) => {
+          if (b.dataset.correct === 'true') b.classList.add('correct');
+          else if (j === i) b.classList.add('wrong');
+          b.disabled = true;
+        });
+        const next = document.createElement('button');
+        next.className = 'primary';
+        next.textContent = idx === total - 1 ? 'Завершить' : 'Далее →';
+        next.onclick = () => {
+          state.revealedAnswer = false;
+          if (idx === total - 1) finishTest();
+          else { state.testIndex++; render(); }
+        };
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        actions.appendChild(next);
+        app.appendChild(actions);
+      }
+    };
+    opts.appendChild(btn);
+  });
+  box.appendChild(opts);
+}
+
+// ---------- Результат теста по подтеме ----------
+function finishTest() {
+  const theme = getTheme(state.themeId);
+  const allCorrect = state.testAnswers.every(a => a.correct);
+
+  if (!state.generalTest && allCorrect) {
+    setSubStatus(theme.id, state.level, state.subtopic, { done: true, read: true });
+  }
+  if (!state.generalTest && !allCorrect) {
+    setSubStatus(theme.id, state.level, state.subtopic, { done: false, read: false });
+  }
+
+  state.lastTestResult = { allCorrect, general: false, interview: false, final: false };
+  state.screen = 'testResult';
+  render();
+}
+
+// ---------- Результат итогового теста ----------
+function finishFinalTest() {
+  const theme = getTheme(state.themeId);
+  const level = state.finalLevel;
+  const allCorrect = state.testAnswers.every(a => a.correct);
+
+  if (allCorrect) {
+    setSubStatus(theme.id, level, FINAL_SUB, { done: true });
+  }
+
+  state.lastTestResult = {
+    allCorrect,
+    general: false,
+    interview: true,
+    final: true,
+    finalLevel: level
+  };
+  state.screen = 'testResult';
+  render();
+}
+
+// ---------- Результат ----------
+function renderTestResult() {
+  const r = state.lastTestResult;
+  const correctCount = state.testAnswers.filter(a => a.correct).length;
+  const total = state.testAnswers.length;
+
+  const box = document.createElement('div');
+  box.className = 'result-box ' + (r.allCorrect ? 'ok' : 'fail');
+  box.innerHTML = `
+    <span class="emoji">${r.allCorrect ? '🎉' : '😕'}</span>
+    <h2>${r.final
+      ? (r.allCorrect ? 'Сегмент пройден!' : 'Итоговый тест не сдан')
+      : (r.allCorrect ? 'Тест сдан!' : 'Есть ошибки')}</h2>
+    <div class="score">Правильных ответов: <b>${correctCount} / ${total}</b></div>
+    ${r.final ? '<p class="muted">Итоговый тест открывает следующий уровень только при 100%.</p>' : ''}
+    ${!r.allCorrect && !r.final ? '<p>Придётся перечитать теорию и попробовать снова.</p>' : ''}
+  `;
+  app.appendChild(box);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+
+  if (r.final) {
+    if (r.allCorrect) {
+      actions.innerHTML = `<button class="primary" id="back">К пути</button>`;
+      actions.querySelector('#back').onclick = () => { state.screen = 'path'; render(); };
+    } else {
+      actions.innerHTML = `
+        <button class="primary" id="retry">Пройти ещё раз</button>
+        <button id="back">К пути</button>
+      `;
+      actions.querySelector('#retry').onclick = () => startFinalTest(r.finalLevel);
+      actions.querySelector('#back').onclick = () => { state.screen = 'path'; render(); };
+    }
+  } else if (r.allCorrect) {
+    actions.innerHTML = `<button class="primary" id="back">К пути</button>`;
+    actions.querySelector('#back').onclick = () => {
+      if (isFlat(getTheme(state.themeId))) state.screen = 'flatSubtopics';
+      else state.screen = 'path';
+      render();
+    };
+  } else {
+    actions.innerHTML = `<button class="primary" id="readTheory">Перечитать теорию →</button>`;
+    actions.querySelector('#readTheory').onclick = () => {
+      state.theoryIndex = 0;
+      state.screen = 'theory';
+      render();
+    };
+  }
+  app.appendChild(actions);
+}
+
+// ---------- Итог собеседования ----------
+function finishInterview() {
+  const correctCount = state.testAnswers.filter(a => a.correct).length;
+  state.lastTestResult = {
+    allCorrect: false,
+    general: false,
+    interview: true,
+    final: false,
+    correctCount,
+    total: state.testAnswers.length
+  };
+  state.screen = 'review';
+  render();
+}
+
+function renderReview() {
+  const answers = state.testAnswers;
+  const correctCount = answers.filter(a => a.correct).length;
+  const total = answers.length;
+  const pct = total ? Math.round(correctCount / total * 100) : 0;
+  const ok = correctCount === total;
+
+  const header = document.createElement('header');
+  header.className = 'page-head';
+  header.innerHTML = `
+    <button class="ghost icon" id="back">←</button>
+    <h1 style="flex:1">Разбор собеседования</h1>
+  `;
+  app.appendChild(header);
+  document.getElementById('back').onclick = () => { state.screen = 'themes'; render(); };
+
+  const summary = document.createElement('div');
+  summary.className = 'result-box ' + (ok ? 'ok' : 'fail');
+  summary.innerHTML = `
+    <span class="emoji">${ok ? '🎉' : (pct >= 70 ? '👍' : '😕')}</span>
+    <h2>${pct}%</h2>
+    <div class="score">Правильных ответов: <b>${correctCount} / ${total}</b></div>
+  `;
+  app.appendChild(summary);
+
+  const sorted = [...answers].sort((a, b) => {
+    if (a.correct !== b.correct) return a.correct ? 1 : -1;
+    return (b.timeMs || 0) - (a.timeMs || 0);
+  });
+
+  const list = document.createElement('div');
+  list.className = 'review-list';
+
+  sorted.forEach(a => {
+    const q = QUESTIONS_MAP.get(a.qid);
+    const item = document.createElement('div');
+    item.className = 'review-item' + (a.correct ? ' ok' : '');
+    const timeSec = a.timeMs ? (a.timeMs / 1000).toFixed(1) : '—';
+    const rightAnswer = a.correctText || (q ? (q.explain || q.a) : '');
+    item.innerHTML = `
+      <div class="rq">${renderRichText(q ? q.q : a.qid)}</div>
+      ${a.correct ? '' : `
+        <div class="answer-row wrong">
+          <span class="lbl">Твой ответ:</span>
+          <span class="val">${escapeHtml(a.chosenText || '')}</span>
+        </div>
+      `}
+      <div class="answer-row right">
+        <span class="lbl">${a.correct ? 'Ответ:' : 'Верно:'}</span>
+        <span class="val">${renderRichText(rightAnswer)}</span>
+      </div>
+      <div class="meta">
+        <span>${a.correct ? '✅ Верно' : '❌ Ошибка'}</span>
+        <span>⏱ ${timeSec} с</span>
+        <button class="ghost" data-qid="${a.qid}">Открыть теорию →</button>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+  app.appendChild(list);
+  applyCodeHighlight(list);
+
+  list.querySelectorAll('button[data-qid]').forEach(btn => {
+    btn.onclick = () => jumpToQuestion(btn.dataset.qid);
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.innerHTML = `
+    <button class="primary" id="retry">Пройти ещё раз</button>
+    <button id="back2">На главную</button>
+  `;
+  actions.querySelector('#retry').onclick = () => {
+    if (state.interviewConfig) startInterview(state.interviewConfig);
+  };
+  actions.querySelector('#back2').onclick = () => { state.screen = 'themes'; render(); };
+  app.appendChild(actions);
+}
+
+// ---------- Прыжок в теорию ----------
+function jumpToQuestion(qid) {
+  const q = QUESTIONS_MAP.get(qid);
+  if (!q) return;
+  const theme = DATA.find(t => t.questions.some(x => x.id === qid));
+  if (!theme) return;
+
+  if (isFlat(theme)) {
+    state.themeId = theme.id;
+    state.level = FLAT_LEVEL;
+    state.subtopic = q.subtopic;
+    const subs = allSubtopicsOfTheme(theme);
+    const list = subs[q.subtopic];
+    if (!list) return;
+    state.theoryIndex = list.findIndex(x => x.id === qid);
+  } else {
+    state.themeId = theme.id;
+    state.level = q.level;
+    state.subtopic = q.subtopic;
+    const subs = subtopicsOfExactLevel(theme, q.level);
+    const list = subs[q.subtopic];
+    if (!list) return;
+    state.theoryIndex = list.findIndex(x => x.id === qid);
+  }
+  state.screen = 'theory';
+  render();
+}
+
+// ================== РЕЖИМ СОБЕСЕДОВАНИЯ ==================
 function renderInterviewConfig() {
   const saved = loadInterviewConfig();
   const cfg = saved || {
@@ -533,7 +1114,6 @@ function renderInterviewConfig() {
 
   const wrap = document.createElement('div');
 
-  // 1) Темы
   const themesBlock = document.createElement('div');
   themesBlock.className = 'config-section';
   themesBlock.innerHTML = `<label>Темы</label>`;
@@ -563,7 +1143,6 @@ function renderInterviewConfig() {
   themesBlock.appendChild(themeList);
   wrap.appendChild(themesBlock);
 
-  // 2) Уровень
   const levelBlock = document.createElement('div');
   levelBlock.className = 'config-section';
   levelBlock.innerHTML = `<label>Уровень (до какого включительно)</label>`;
@@ -585,7 +1164,6 @@ function renderInterviewConfig() {
   levelBlock.appendChild(chipRow);
   wrap.appendChild(levelBlock);
 
-  // 3) Количество
   const sizeBlock = document.createElement('div');
   sizeBlock.className = 'config-section';
   sizeBlock.innerHTML = `<label>Количество вопросов</label>`;
@@ -606,7 +1184,6 @@ function renderInterviewConfig() {
   sizeBlock.appendChild(sizeRow);
   wrap.appendChild(sizeBlock);
 
-  // 4) Учитывать ошибки
   const mistakeBlock = document.createElement('div');
   mistakeBlock.className = 'config-section';
   const mistakeItem = document.createElement('label');
@@ -625,12 +1202,10 @@ function renderInterviewConfig() {
   mistakeBlock.appendChild(mistakeItem);
   wrap.appendChild(mistakeBlock);
 
-  // Pool info
   const poolInfo = document.createElement('div');
   poolInfo.className = 'pool-info';
   wrap.appendChild(poolInfo);
 
-  // Start button
   const startBtn = document.createElement('button');
   startBtn.className = 'primary';
   startBtn.style.width = '100%';
@@ -695,330 +1270,11 @@ function startInterview(cfg) {
   state.revealedAnswer = false;
   state.generalTest = false;
   state.interviewMode = true;
+  state.finalTest = false;
+  state.finalLevel = null;
   state.interviewConfig = cfg;
   state.questionShownAt = Date.now();
   state.screen = 'test';
-  render();
-}
-
-// ---------- Генерация тестового вопроса ----------
-function makeTestQuestion(q, pool) {
-  let options;
-  if (Array.isArray(q.wrong) && q.wrong.length >= 3) {
-    options = shuffle([
-      { text: q.a, correct: true },
-      ...q.wrong.slice(0, 3).map(text => ({ text, correct: false }))
-    ]);
-  } else {
-    const others = pool.filter(x => x.id !== q.id);
-    let distractors = others.filter(x => x.subtopic === q.subtopic);
-    if (distractors.length < 3) distractors = others;
-    distractors = shuffle(distractors).slice(0, 3);
-    options = shuffle([
-      { text: q.a, correct: true },
-      ...distractors.map(d => ({ text: d.a, correct: false }))
-    ]);
-  }
-  return { q, options };
-}
-
-// ---------- Тест ----------
-function renderTest() {
-  const total = state.testQueue.length;
-  const idx = state.testIndex;
-  const item = state.testQueue[idx];
-  const interview = state.interviewMode;
-  state.questionShownAt = Date.now();
-
-  const nav = document.createElement('div');
-  nav.className = 'theory-nav';
-  nav.innerHTML = `
-    <button class="ghost icon" id="quit">←</button>
-    <div class="progress-line" style="flex:1">
-      <div class="bar"><i style="width:${idx / total * 100}%"></i></div>
-      <span class="counter">${idx + 1} / ${total}</span>
-    </div>
-  `;
-  app.appendChild(nav);
-  document.getElementById('quit').onclick = () => {
-    if (confirm('Выйти из теста? Прогресс не сохранится.')) {
-      if (interview) { state.screen = 'interviewConfig'; }
-      else { state.screen = 'subtopics'; }
-      render();
-    }
-  };
-
-  const box = document.createElement('div');
-  box.className = 'qbox';
-  const interviewBadge = interview ? '<div class="tag tag--interview">🎯 Собеседование</div>' : '';
-  const levelTag = item.q.level ? ` · ${LEVEL_LABELS[item.q.level]}` : '';
-  box.innerHTML = `
-    <div class="tag-row">
-      <div class="tag">${item.q.subtopic}${levelTag}</div>
-      ${interviewBadge}
-    </div>
-    <div class="q">${renderRichText(item.q.q)}</div>
-  `;
-  app.appendChild(box);
-  applyCodeHighlight(box);
-
-  const opts = document.createElement('div');
-  opts.className = 'options';
-
-  item.options.forEach((o, i) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'opt';
-    btn.dataset.correct = o.correct;
-    btn.dataset.i = i;
-    // ВАЖНО: варианты — plain text, без форматирования и подсветки
-    btn.innerHTML = `<span class="key">${i + 1}</span>${escapeHtml(o.text)}`;
-
-    btn.onclick = () => {
-      if (state.revealedAnswer) return;
-      const timeMs = Date.now() - state.questionShownAt;
-
-      if (interview) {
-        state.revealedAnswer = true;
-        state.testAnswers.push({
-          qid: item.q.id,
-          correct: o.correct,
-          chosenText: o.text,
-          correctText: item.q.explain || item.q.a,
-          timeMs,
-          interview: true
-        });
-        recordAnswer(item.q.id, o.correct, timeMs);
-        opts.querySelectorAll('.opt').forEach(b => { b.disabled = true; });
-        btn.classList.add('chosen');
-
-        const next = document.createElement('button');
-        next.className = 'primary';
-        next.textContent = idx === total - 1 ? 'Завершить' : 'Далее →';
-        next.onclick = () => {
-          state.revealedAnswer = false;
-          if (idx === total - 1) finishInterview();
-          else { state.testIndex++; render(); }
-        };
-        const actions = document.createElement('div');
-        actions.className = 'actions';
-        actions.appendChild(next);
-        app.appendChild(actions);
-      } else {
-        state.revealedAnswer = true;
-        state.testAnswers.push({
-          qid: item.q.id,
-          correct: o.correct,
-          timeMs
-        });
-        recordAnswer(item.q.id, o.correct, timeMs);
-
-        opts.querySelectorAll('.opt').forEach((b, j) => {
-          if (b.dataset.correct === 'true') b.classList.add('correct');
-          else if (j === i) b.classList.add('wrong');
-          b.disabled = true;
-        });
-        const next = document.createElement('button');
-        next.className = 'primary';
-        next.textContent = idx === total - 1 ? 'Завершить' : 'Далее →';
-        next.onclick = () => {
-          state.revealedAnswer = false;
-          if (idx === total - 1) finishTest();
-          else { state.testIndex++; render(); }
-        };
-        const actions = document.createElement('div');
-        actions.className = 'actions';
-        actions.appendChild(next);
-        app.appendChild(actions);
-      }
-    };
-    opts.appendChild(btn);
-  });
-  box.appendChild(opts);
-}
-
-// ---------- Результат обычного теста ----------
-function finishTest() {
-  const theme = getTheme(state.themeId);
-  const allCorrect = state.testAnswers.every(a => a.correct);
-
-  if (!state.generalTest && allCorrect) {
-    setSubStatus(theme.id, state.level, state.subtopic, { done: true, read: true });
-  }
-  if (!state.generalTest && !allCorrect) {
-    setSubStatus(theme.id, state.level, state.subtopic, { done: false, read: false });
-  }
-
-  state.lastTestResult = { allCorrect, general: !!state.generalTest, interview: false };
-  state.screen = 'testResult';
-  render();
-}
-
-function renderTestResult() {
-  const { allCorrect, general } = state.lastTestResult;
-  const correctCount = state.testAnswers.filter(a => a.correct).length;
-  const total = state.testAnswers.length;
-
-  const box = document.createElement('div');
-  box.className = 'result-box ' + (allCorrect ? 'ok' : 'fail');
-  box.innerHTML = `
-    <span class="emoji">${allCorrect ? '🎉' : '😕'}</span>
-    <h2>${allCorrect ? 'Тест сдан!' : 'Есть ошибки'}</h2>
-    <div class="score">Правильных ответов: <b>${correctCount} / ${total}</b></div>
-    ${general ? '<p class="muted">Это был общий тест — он не влияет на прогресс подтем.</p>' : ''}
-    ${!allCorrect && !general ? '<p>Придётся перечитать теорию и попробовать снова.</p>' : ''}
-  `;
-  app.appendChild(box);
-
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  if (allCorrect) {
-    actions.innerHTML = `<button class="primary" id="back">К подтемам</button>`;
-    actions.querySelector('#back').onclick = () => { state.screen = 'subtopics'; render(); };
-  } else {
-    if (general) {
-      actions.innerHTML = `
-        <button class="primary" id="retry">Пройти ещё раз</button>
-        <button id="back">К подтемам</button>
-      `;
-      actions.querySelector('#retry').onclick = () => startGeneralTest();
-      actions.querySelector('#back').onclick = () => { state.screen = 'subtopics'; render(); };
-    } else {
-      actions.innerHTML = `<button class="primary" id="readTheory">Перечитать теорию →</button>`;
-      actions.querySelector('#readTheory').onclick = () => {
-        state.theoryIndex = 0;
-        state.screen = 'theory';
-        render();
-      };
-    }
-  }
-  app.appendChild(actions);
-}
-
-// ---------- Итог собеседования ----------
-function finishInterview() {
-  const correctCount = state.testAnswers.filter(a => a.correct).length;
-  state.lastTestResult = {
-    allCorrect: false,
-    general: false,
-    interview: true,
-    correctCount,
-    total: state.testAnswers.length
-  };
-  state.screen = 'review';
-  render();
-}
-
-function renderReview() {
-  const answers = state.testAnswers;
-  const correctCount = answers.filter(a => a.correct).length;
-  const total = answers.length;
-  const pct = total ? Math.round(correctCount / total * 100) : 0;
-  const ok = correctCount === total;
-
-  const header = document.createElement('header');
-  header.className = 'page-head';
-  header.innerHTML = `
-    <button class="ghost icon" id="back">←</button>
-    <h1 style="flex:1">Разбор собеседования</h1>
-  `;
-  app.appendChild(header);
-  document.getElementById('back').onclick = () => {
-    state.screen = 'themes';
-    render();
-  };
-
-  const summary = document.createElement('div');
-  summary.className = 'result-box ' + (ok ? 'ok' : 'fail');
-  summary.innerHTML = `
-    <span class="emoji">${ok ? '🎉' : (pct >= 70 ? '👍' : '😕')}</span>
-    <h2>${pct}%</h2>
-    <div class="score">Правильных ответов: <b>${correctCount} / ${total}</b></div>
-  `;
-  app.appendChild(summary);
-
-  const sorted = [...answers].sort((a, b) => {
-    if (a.correct !== b.correct) return a.correct ? 1 : -1;
-    return (b.timeMs || 0) - (a.timeMs || 0);
-  });
-
-  const list = document.createElement('div');
-  list.className = 'review-list';
-
-  sorted.forEach(a => {
-    const q = QUESTIONS_MAP.get(a.qid);
-    const item = document.createElement('div');
-    item.className = 'review-item' + (a.correct ? ' ok' : '');
-    const timeSec = a.timeMs ? (a.timeMs / 1000).toFixed(1) : '—';
-    const rightAnswer = a.correctText || (q ? (q.explain || q.a) : '');
-    item.innerHTML = `
-      <div class="rq">${renderRichText(q ? q.q : a.qid)}</div>
-      ${a.correct ? '' : `
-        <div class="answer-row wrong">
-          <span class="lbl">Твой ответ:</span>
-          <span class="val">${escapeHtml(a.chosenText || '')}</span>
-        </div>
-      `}
-      <div class="answer-row right">
-        <span class="lbl">${a.correct ? 'Ответ:' : 'Верно:'}</span>
-        <span class="val">${renderRichText(rightAnswer)}</span>
-      </div>
-      <div class="meta">
-        <span>${a.correct ? '✅ Верно' : '❌ Ошибка'}</span>
-        <span>⏱ ${timeSec} с</span>
-        <button class="ghost" data-qid="${a.qid}">Открыть теорию →</button>
-      </div>
-    `;
-    list.appendChild(item);
-  });
-  app.appendChild(list);
-  applyCodeHighlight(list);
-
-  list.querySelectorAll('button[data-qid]').forEach(btn => {
-    btn.onclick = () => {
-      const qid = btn.dataset.qid;
-      jumpToQuestion(qid);
-    };
-  });
-
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  actions.innerHTML = `
-    <button class="primary" id="retry">Пройти ещё раз</button>
-    <button id="back2">На главную</button>
-  `;
-  actions.querySelector('#retry').onclick = () => {
-    if (state.interviewConfig) startInterview(state.interviewConfig);
-  };
-  actions.querySelector('#back2').onclick = () => { state.screen = 'themes'; render(); };
-  app.appendChild(actions);
-}
-
-// Прыжок в теорию на конкретный вопрос
-function jumpToQuestion(qid) {
-  const q = QUESTIONS_MAP.get(qid);
-  if (!q) return;
-  const theme = DATA.find(t => t.questions.some(x => x.id === qid));
-  if (!theme) return;
-
-  if (isFlat(theme)) {
-    state.themeId = theme.id;
-    state.level = FLAT_LEVEL;
-    state.subtopic = q.subtopic;
-    const subs = allSubtopicsOfTheme(theme);
-    const list = subs[q.subtopic];
-    if (!list) return;
-    state.theoryIndex = list.findIndex(x => x.id === qid);
-  } else {
-    state.themeId = theme.id;
-    state.level = q.level;
-    state.subtopic = q.subtopic;
-    const subs = subtopicsOfExactLevel(theme, q.level);
-    const list = subs[q.subtopic];
-    if (!list) return;
-    state.theoryIndex = list.findIndex(x => x.id === qid);
-  }
-  state.screen = 'theory';
   render();
 }
 
@@ -1032,13 +1288,6 @@ function topBar(title, onBack) {
   `;
   app.appendChild(h);
   document.getElementById('back').onclick = onBack;
-}
-
-function plural(n, one, few, many) {
-  const mod10 = n % 10, mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
-  return many;
 }
 
 // ================== Клавиатура ==================
@@ -1074,7 +1323,7 @@ document.addEventListener('keydown', (e) => {
       const b = document.getElementById('back');
       if (b) b.click();
     }
-  } else if (state.screen === 'interviewConfig' || state.screen === 'review') {
+  } else if (state.screen === 'interviewConfig' || state.screen === 'review' || state.screen === 'path') {
     if (e.key === 'Escape') {
       const b = document.getElementById('back');
       if (b) b.click();
@@ -1082,7 +1331,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ================== Свайпы (touch) ==================
+// ================== Свайпы ==================
 let touchStartX = 0, touchStartY = 0, touchActive = false;
 document.addEventListener('touchstart', (e) => {
   if (e.touches.length !== 1) return;
@@ -1124,12 +1373,12 @@ document.addEventListener('touchend', (e) => {
     DATA_MAP.clear();
     QUESTIONS_MAP.clear();
     DATA.forEach(t => {
+      t.questions = t.questions || [];
       DATA_MAP.set(t.id, t);
-      (t.questions || []).forEach(q => QUESTIONS_MAP.set(q.id, q));
+      t.questions.forEach(q => QUESTIONS_MAP.set(q.id, q));
 
-      // Предупреждение: flat-тема, но у вопроса есть level
       if (t.structure === 'flat') {
-        (t.questions || []).forEach(q => {
+        t.questions.forEach(q => {
           if (q.level) {
             console.warn(`[flat-theme] ${t.theme}: вопрос ${q.id} содержит level, но тема flat`);
           }
@@ -1154,7 +1403,7 @@ document.addEventListener('touchend', (e) => {
   });
 })();
 
-// ================== PWA: Service Worker ==================
+// ================== PWA ==================
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
