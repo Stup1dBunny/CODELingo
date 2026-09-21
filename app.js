@@ -15,6 +15,7 @@ const INTERVIEW_CONFIG_KEY = 'quiz_interview_config_v1';
 const GENERAL_TEST_SIZE = 18;
 const INTERVIEW_DEFAULT_SIZE = 15;
 const INTERVIEW_SIZES = [10, 15, 20, 30];
+const FLAT_LEVEL = 'all';   // фиктивный "уровень" для тем без уровней
 
 // ================== Состояние ==================
 const state = {
@@ -107,6 +108,34 @@ function saveInterviewConfig(cfg) {
 // ================== Утилиты ==================
 function getTheme(id) { return DATA_MAP.get(id); }
 
+// ---------- Режим темы ----------
+function isFlat(theme) {
+  return !!(theme && theme.structure === 'flat');
+}
+
+// Все подтемы темы (без учёта уровня) — для flat-режима
+function allSubtopicsOfTheme(theme) {
+  const map = {};
+  (theme.questions || []).forEach(q => {
+    (map[q.subtopic] = map[q.subtopic] || []).push(q);
+  });
+  return map;
+}
+
+// Все вопросы темы (для flat-режима)
+function allQuestionsOfTheme(theme) {
+  return (theme.questions || []).slice();
+}
+
+// Подтемы для текущего экрана: с учётом уровня или без
+function subtopicsForState(theme, level) {
+  if (isFlat(theme) || level === FLAT_LEVEL) {
+    return allSubtopicsOfTheme(theme);
+  }
+  return subtopicsOfExactLevel(theme, level);
+}
+
+// ---------- Базовые выборки ----------
 function questionsOfExactLevel(theme, level) {
   return theme.questions.filter(q => q.level === level);
 }
@@ -250,15 +279,25 @@ function renderThemes() {
   grid.className = 'grid themes';
 
   DATA.forEach(theme => {
-    const levelsWithQs = LEVELS.filter(l => questionsOfExactLevel(theme, l).length > 0);
     let totalSubs = 0, doneSubs = 0;
-    levelsWithQs.forEach(level => {
-      const subs = subtopicsOfExactLevel(theme, level);
+
+    if (isFlat(theme)) {
+      const subs = allSubtopicsOfTheme(theme);
       Object.keys(subs).forEach(sub => {
         totalSubs++;
-        if (getSubStatus(theme.id, level, sub).done) doneSubs++;
+        if (getSubStatus(theme.id, FLAT_LEVEL, sub).done) doneSubs++;
       });
-    });
+    } else {
+      const levelsWithQs = LEVELS.filter(l => questionsOfExactLevel(theme, l).length > 0);
+      levelsWithQs.forEach(level => {
+        const subs = subtopicsOfExactLevel(theme, level);
+        Object.keys(subs).forEach(sub => {
+          totalSubs++;
+          if (getSubStatus(theme.id, level, sub).done) doneSubs++;
+        });
+      });
+    }
+
     const pct = totalSubs ? Math.round(doneSubs / totalSubs * 100) : 0;
     const isEmpty = theme.questions.length === 0;
 
@@ -271,7 +310,17 @@ function renderThemes() {
       ${!isEmpty ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ''}
     `;
     if (!isEmpty) {
-      card.onclick = () => { state.themeId = theme.id; state.screen = 'levels'; render(); };
+      card.onclick = () => {
+        state.themeId = theme.id;
+        if (isFlat(theme)) {
+          state.level = FLAT_LEVEL;
+          state.screen = 'subtopics';
+        } else {
+          state.level = null;
+          state.screen = 'levels';
+        }
+        render();
+      };
     }
     grid.appendChild(card);
   });
@@ -321,16 +370,34 @@ function renderLevels() {
 // ---------- Подтемы ----------
 function renderSubtopics() {
   const theme = getTheme(state.themeId);
-  topBar(`${theme.theme} · ${LEVEL_LABELS[state.level]}`, () => { state.screen = 'levels'; render(); });
+  const flat = isFlat(theme) || state.level === FLAT_LEVEL;
 
-  const subs = subtopicsOfExactLevel(theme, state.level);
-  const upToCount = questionsUpToLevel(theme, state.level).length;
+  const title = flat
+    ? theme.theme
+    : `${theme.theme} · ${LEVEL_LABELS[state.level]}`;
+
+  topBar(title, () => {
+    if (flat) {
+      state.screen = 'themes';
+    } else {
+      state.screen = 'levels';
+    }
+    render();
+  });
+
+  const subs = flat
+    ? allSubtopicsOfTheme(theme)
+    : subtopicsOfExactLevel(theme, state.level);
+
+  const upToCount = flat
+    ? allQuestionsOfTheme(theme).length
+    : questionsUpToLevel(theme, state.level).length;
 
   const general = document.createElement('div');
   general.className = 'general-card';
   general.innerHTML = `
-    <h3>🎯 Общий тест уровня</h3>
-    <div class="sub">${Math.min(GENERAL_TEST_SIZE, upToCount)} случайных вопросов со всех уровней до ${LEVEL_LABELS[state.level]} включительно</div>
+    <h3>🎯 Общий тест ${flat ? 'по теме' : 'уровня'}</h3>
+    <div class="sub">${Math.min(GENERAL_TEST_SIZE, upToCount)} случайных вопросов ${flat ? 'из всех подтем' : `со всех уровней до ${LEVEL_LABELS[state.level]} включительно`}</div>
   `;
   general.onclick = () => startGeneralTest();
   app.appendChild(general);
@@ -339,7 +406,8 @@ function renderSubtopics() {
   grid.className = 'grid themes';
 
   Object.entries(subs).forEach(([sub, list]) => {
-    const st = getSubStatus(theme.id, state.level, sub);
+    const levelKey = flat ? FLAT_LEVEL : state.level;
+    const st = getSubStatus(theme.id, levelKey, sub);
     const statusIcon = st.done ? '✓' : st.read ? '📖' : '🔒';
     const card = document.createElement('div');
     card.className = 'card' + (st.done ? ' is-done' : '');
@@ -364,7 +432,7 @@ function startTheory(sub) {
 
 function renderTheory() {
   const theme = getTheme(state.themeId);
-  const subs = subtopicsOfExactLevel(theme, state.level);
+  const subs = subtopicsForState(theme, state.level);
   const list = subs[state.subtopic];
   const total = list.length;
   const idx = state.theoryIndex;
@@ -385,7 +453,7 @@ function renderTheory() {
   const box = document.createElement('div');
   box.className = 'qbox';
   box.innerHTML = `
-    <div class="tag">${q.subtopic} · ${LEVEL_LABELS[q.level]}</div>
+    <div class="tag">${q.subtopic}${q.level ? ' · ' + LEVEL_LABELS[q.level] : ''}</div>
     <div class="q">${renderRichText(q.q)}</div>
     <div class="a">${renderRichText(q.explain || q.a)}</div>
   `;
@@ -415,7 +483,7 @@ function renderTheory() {
 // ---------- Тест по подтеме ----------
 function startTestForSubtopic() {
   const theme = getTheme(state.themeId);
-  const subs = subtopicsOfExactLevel(theme, state.level);
+  const subs = subtopicsForState(theme, state.level);
   const list = subs[state.subtopic];
 
   setSubStatus(theme.id, state.level, state.subtopic, { read: true });
@@ -431,10 +499,14 @@ function startTestForSubtopic() {
   render();
 }
 
-// ---------- Общий тест уровня ----------
+// ---------- Общий тест уровня / темы ----------
 function startGeneralTest() {
   const theme = getTheme(state.themeId);
-  const all = questionsUpToLevel(theme, state.level);
+  const flat = isFlat(theme) || state.level === FLAT_LEVEL;
+  const all = flat
+    ? allQuestionsOfTheme(theme)
+    : questionsUpToLevel(theme, state.level);
+
   const picked = weightedSample(all, Math.min(GENERAL_TEST_SIZE, all.length));
   state.testQueue = picked.map(q => makeTestQuestion(q, all));
   state.testIndex = 0;
@@ -451,7 +523,7 @@ function startGeneralTest() {
 function renderInterviewConfig() {
   const saved = loadInterviewConfig();
   const cfg = saved || {
-    themeIds: DATA.map(t => t.id), // по умолчанию все темы
+    themeIds: DATA.map(t => t.id),
     maxLevel: 'Senior',
     size: INTERVIEW_DEFAULT_SIZE,
     useMistakes: true
@@ -574,8 +646,13 @@ function renderInterviewConfig() {
     const themes = DATA.filter(t => cfg.themeIds.includes(t.id));
     let pool = [];
     themes.forEach(t => {
-      if (cfg.maxLevel === 'all') pool = pool.concat(t.questions);
-      else pool = pool.concat(questionsUpToLevel(t, cfg.maxLevel));
+      if (isFlat(t)) {
+        pool = pool.concat(t.questions);
+      } else if (cfg.maxLevel === 'all') {
+        pool = pool.concat(t.questions);
+      } else {
+        pool = pool.concat(questionsUpToLevel(t, cfg.maxLevel));
+      }
     });
     return pool;
   }
@@ -597,8 +674,13 @@ function startInterview(cfg) {
   const themes = DATA.filter(t => cfg.themeIds.includes(t.id));
   let pool = [];
   themes.forEach(t => {
-    if (cfg.maxLevel === 'all') pool = pool.concat(t.questions);
-    else pool = pool.concat(questionsUpToLevel(t, cfg.maxLevel));
+    if (isFlat(t)) {
+      pool = pool.concat(t.questions);
+    } else if (cfg.maxLevel === 'all') {
+      pool = pool.concat(t.questions);
+    } else {
+      pool = pool.concat(questionsUpToLevel(t, cfg.maxLevel));
+    }
   });
   if (!pool.length) return;
 
@@ -669,9 +751,10 @@ function renderTest() {
   const box = document.createElement('div');
   box.className = 'qbox';
   const interviewBadge = interview ? '<div class="tag tag--interview">🎯 Собеседование</div>' : '';
+  const levelTag = item.q.level ? ` · ${LEVEL_LABELS[item.q.level]}` : '';
   box.innerHTML = `
     <div class="tag-row">
-      <div class="tag">${item.q.subtopic} · ${LEVEL_LABELS[item.q.level]}</div>
+      <div class="tag">${item.q.subtopic}${levelTag}</div>
       ${interviewBadge}
     </div>
     <div class="q">${renderRichText(item.q.q)}</div>
@@ -782,7 +865,7 @@ function renderTestResult() {
     <span class="emoji">${allCorrect ? '🎉' : '😕'}</span>
     <h2>${allCorrect ? 'Тест сдан!' : 'Есть ошибки'}</h2>
     <div class="score">Правильных ответов: <b>${correctCount} / ${total}</b></div>
-    ${general ? '<p class="muted">Это был общий тест уровня — он не влияет на прогресс подтем.</p>' : ''}
+    ${general ? '<p class="muted">Это был общий тест — он не влияет на прогресс подтем.</p>' : ''}
     ${!allCorrect && !general ? '<p>Придётся перечитать теорию и попробовать снова.</p>' : ''}
   `;
   app.appendChild(box);
@@ -917,13 +1000,24 @@ function jumpToQuestion(qid) {
   if (!q) return;
   const theme = DATA.find(t => t.questions.some(x => x.id === qid));
   if (!theme) return;
-  const subs = subtopicsOfExactLevel(theme, q.level);
-  const list = subs[q.subtopic];
-  if (!list) return;
-  state.themeId = theme.id;
-  state.level = q.level;
-  state.subtopic = q.subtopic;
-  state.theoryIndex = list.findIndex(x => x.id === qid);
+
+  if (isFlat(theme)) {
+    state.themeId = theme.id;
+    state.level = FLAT_LEVEL;
+    state.subtopic = q.subtopic;
+    const subs = allSubtopicsOfTheme(theme);
+    const list = subs[q.subtopic];
+    if (!list) return;
+    state.theoryIndex = list.findIndex(x => x.id === qid);
+  } else {
+    state.themeId = theme.id;
+    state.level = q.level;
+    state.subtopic = q.subtopic;
+    const subs = subtopicsOfExactLevel(theme, q.level);
+    const list = subs[q.subtopic];
+    if (!list) return;
+    state.theoryIndex = list.findIndex(x => x.id === qid);
+  }
   state.screen = 'theory';
   render();
 }
@@ -949,7 +1043,6 @@ function plural(n, one, few, many) {
 
 // ================== Клавиатура ==================
 document.addEventListener('keydown', (e) => {
-  // Игнорируем, если пользователь что-то вводит
   const tag = (e.target && e.target.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
 
@@ -1004,8 +1097,8 @@ document.addEventListener('touchend', (e) => {
   const t = e.changedTouches[0];
   const dx = t.clientX - touchStartX;
   const dy = t.clientY - touchStartY;
-  if (Math.abs(dx) < 60) return;             // слишком короткий свайп
-  if (Math.abs(dy) > Math.abs(dx)) return;   // вертикальный скролл — не трогаем
+  if (Math.abs(dx) < 60) return;
+  if (Math.abs(dy) > Math.abs(dx)) return;
 
   if (state.screen === 'theory') {
     if (dx < 0) {
@@ -1033,6 +1126,15 @@ document.addEventListener('touchend', (e) => {
     DATA.forEach(t => {
       DATA_MAP.set(t.id, t);
       (t.questions || []).forEach(q => QUESTIONS_MAP.set(q.id, q));
+
+      // Предупреждение: flat-тема, но у вопроса есть level
+      if (t.structure === 'flat') {
+        (t.questions || []).forEach(q => {
+          if (q.level) {
+            console.warn(`[flat-theme] ${t.theme}: вопрос ${q.id} содержит level, но тема flat`);
+          }
+        });
+      }
     });
     render();
   };
